@@ -179,12 +179,42 @@ function actsOnTarget(text, terms) {
     `|(?<![A-Za-z0-9])${T}(?:\\s?[A-Z]\\d+[A-Z])?(?:\\s?(?:x|\\/|and)\\s?[A-Z0-9-]+)?[-\\s]*(?:dual|directed|targeted|targeting|specific|inhibitor|degrader|CAR|bispecific|antibod|ADC|mAb|monoclonal|vaccine|T[- ]?cell|NK|engager|radioligand|conjugate|siRNA|antisense)`, "i");
   return re.test(text);
 }
+// True when trial text names the agent as acting on the target, e.g. "BCL2 inhibitor sonrotoclax" or
+// "sonrotoclax (BGB-11417), a next-generation BCL-2 inhibitor". Connector words like "plus" or "with"
+// may not sit in between, so a combination partner is not mistaken for the targeted drug.
+const ACT_WORDS = "inhibitors?|antagonists?|degraders?|antibod(?:y|ies)|ADCs?|bispecifics?|CAR[- ]?T|vaccines?|agonists?|blockers?|modulators?|BH3[- ]mimetics?|mimetics?|engagers?|conjugates?";
+function namedInTrial(text, name, terms) {
+  if (!text || !name) return false;
+  const T = "(?:" + terms.map(escRe).join("|") + ")";
+  const N = escRe(name);
+  const MOD = "(?:[A-Z]\\d+[A-Z]\\s+|(?:selective|specific|targeted|targeting|directed)[-\\s]+)?";
+  const GAP = "(?:(?!(?:plus|with|and|or|in|versus|vs|combined|combination|following|after|before|to|of|than)\\b)[A-Za-z-]+\\s+){0,3}";
+  const a = new RegExp(`(?<![A-Za-z0-9])${T}[-\\s]*${MOD}(?:${ACT_WORDS})\\s*[,(:]?\\s*(?:called\\s+|named\\s+)?${N}(?![A-Za-z0-9])`, "i");
+  const b = new RegExp(`(?<![A-Za-z0-9])${N}\\s*(?:\\([^)]{0,40}\\))?\\s*,?\\s*(?:is\\s+)?(?:an?|the)\\s+${GAP}${T}[-\\s]*${MOD}(?:${ACT_WORDS})`, "i");
+  const c = new RegExp(`(?<![A-Za-z0-9])${N}\\s*\\(\\s*(?:an?\\s+)?${GAP}${T}[-\\s]*${MOD}(?:${ACT_WORDS})`, "i");
+  return a.test(text) || b.test(text) || c.test(text);
+}
+// Spelling variants of the search terms that the target's own synonyms list (e.g. BCL2 and Bcl-2).
+function spellingVariants(terms, synonyms) {
+  const keys = new Set(terms.map(normKey));
+  return synonyms.filter(syn => keys.has(normKey(syn)));
+}
+const GENERIC_WORDS = /^(single|multiple|combination|combined|low|high|fixed|escalating|oral|intravenous|subcutaneous|injection|infusion|tablets?|capsules?|placebo|standard|chemotherapy|best|investigator|physician|treatment|therapy|control|vehicle|matching|saline|observation|supportive|dose|arm|cohort|part)$/i;
+
+const SALTS = /\s+(sodium|potassium|calcium|magnesium|mesylate|dimesylate|hydrochloride|dihydrochloride|hcl|tosylate|maleate|citrate|sulfate|phosphate|acetate|fumarate|tartrate|besylate|succinate|bromide|hydrobromide|malate|lactate)$/i;
+function baseDrugName(n) { return String(n || "").trim().replace(SALTS, ""); }
+const OT_RANK = { PRECLINICAL: 1, EARLY_PHASE_1: 2, PHASE_1: 3, PHASE_1_2: 3.5, PHASE_2: 4, PHASE_2_3: 4.5, PHASE_3: 5, WITHDRAWAL: 6, PHASE_4: 6, APPROVAL: 7 };
+
 function normKey(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
 
 // Stage for a curated drug, from its highest stage anywhere and whether an FDA record exists.
-function stageFor(otStage, fda) {
+function stageFor(otStage, fda, chemblPhase) {
   if (fda && fda.date) return { key: "fda", detail: `Earliest FDA approval on record: ${fmtDate(fda.date)}${fda.brand ? " (" + titleCase(fda.brand) + ")" : ""}` };
   if (fda) return { key: "fda", detail: `FDA-licensed${fda.brand ? " as " + titleCase(fda.brand) : ""} (${fda.app}); approval date not in this record` };
+  const claimsApproval = ["APPROVAL", "PHASE_4", "WITHDRAWAL"].includes(otStage);
+  if (claimsApproval && typeof chemblPhase === "number" && chemblPhase < 4) {
+    return { key: "clin", detail: `Highest stage reached: ${chemblPhase === 0.5 ? "Early phase 1" : "Phase " + chemblPhase} (no approval record found in FDA or ChEMBL)` };
+  }
   if (otStage === "APPROVAL" || otStage === "PHASE_4") return { key: "exus", detail: "Approved by a non-US regulator; no FDA approval record found" };
   if (otStage === "WITHDRAWAL") return { key: "exus", detail: "Approved outside the US at some point, later withdrawn; no FDA record found" };
   if (otStage === "PRECLINICAL") return { key: "pre", detail: "Lab or animal studies only" };
@@ -236,6 +266,8 @@ function extractAgents(studies, knownDrugs, terms) {
     const nct = (ps.identificationModule || {}).nctId;
     const phases = (ps.designModule || {}).phases || ["NA"];
     const ph = phases.reduce((a, b) => (PHASE_RANK[b] || 0) > (PHASE_RANK[a] || 0) ? b : a, "NA");
+    const idm = ps.identificationModule || {};
+    const trialText = [idm.briefTitle, idm.officialTitle, (ps.descriptionModule || {}).briefSummary].filter(Boolean).join(" . ");
     for (const iv of (ps.armsInterventionsModule || {}).interventions || []) {
       if (!["DRUG", "BIOLOGICAL", "GENETIC", "COMBINATION_PRODUCT"].includes(iv.type)) continue;
       const nameTxt = [iv.name || ""].concat(iv.otherNames || []).join(" ; ");
@@ -244,21 +276,28 @@ function extractAgents(studies, knownDrugs, terms) {
       if (known) { const set = knownHits.get(known[1].id) || new Set(); set.add(nct); knownHits.set(known[1].id, set); continue; }
       const inName = tRe.test(nameTxt);
       const acts = actsOnTarget(nameTxt + " ; " + (iv.description || ""), terms);
-      if (!inName && !acts) continue;
-      const found = [];
+      const codes = [];
       for (const m of nameTxt.matchAll(/\b([A-Z]{1,6})[- ]?(\d{2,6}[A-Z]?)\b/g)) {
         if (NOT_CODES.test(m[1]) || /^[A-Z]\d{2,4}[A-Z]$/.test(m[0]) || terms.some(t => normKey(t) === normKey(m[0]))) continue;
-        found.push({ key: (m[1] + m[2]).toUpperCase(), label: m[0] });
+        codes.push({ key: (m[1] + m[2].replace(/^0+(?=\d)/, "")).toUpperCase(), label: m[0], code: true });
       }
+      const first = ((iv.name || "").trim().split(/[\s,;(]+/)[0] || "");
+      const inn = /^[A-Za-z]{6,}$/.test(first) && !GENERIC_WORDS.test(first) ? [{ key: first.toUpperCase(), label: titleCase(first), code: false }] : [];
+      let found;
+      if (inName || acts) found = codes;
+      else found = [...inn, ...codes].filter(c => namedInTrial(trialText, c.label, terms)).length ? [...inn, ...codes] : [];
       if (!found.length) { if (inName) unnamed.add(nct); continue; }
-      const f = found[0];
-      const a = agents.get(f.key) || { key: f.key, name: f.label, type: iv.type, trials: new Set(), phase: "NA" };
+      // Prefer the nonproprietary name for display, and file every alias (e.g. BGB-11417) under the same agent.
+      const display = found.find(f => !f.code) || found[0];
+      let a = found.map(f => agents.get(f.key)).find(Boolean);
+      if (!a) a = { key: display.key, name: display.label, isInn: !display.code, type: iv.type, trials: new Set(), phase: "NA" };
+      if (!display.code && !a.isInn) { a.name = display.label; a.isInn = true; }
       a.trials.add(nct);
       if ((PHASE_RANK[ph] || 0) > (PHASE_RANK[a.phase] || 0)) a.phase = ph;
-      agents.set(f.key, a);
+      for (const f of found) agents.set(f.key, a);
     }
   }
-  return { agents: [...agents.values()], unnamed, knownHits };
+  return { agents: [...new Set(agents.values())], unnamed, knownHits };
 }
 
 // Meeting abstract sources on Crossref, with a test that separates abstracts from full articles.
@@ -350,7 +389,7 @@ async function fdaLookup(name) {
 
 async function fetchTrials(terms) {
   const q = terms.map(t => `"${t}"`).join(" OR ");
-  const f = "NCTId,BriefTitle,Phase,OverallStatus,InterventionName,InterventionType,InterventionOtherName,InterventionDescription";
+  const f = "NCTId,BriefTitle,OfficialTitle,BriefSummary,Phase,OverallStatus,InterventionName,InterventionType,InterventionOtherName,InterventionDescription";
   const [intr, any] = await Promise.all([
     getJSON(`https://clinicaltrials.gov/api/v2/studies?query.intr=${encodeURIComponent(q)}&pageSize=1000&fields=${f}`),
     getJSON(`https://clinicaltrials.gov/api/v2/studies?query.term=${encodeURIComponent(q)}&pageSize=1&countTotal=true&fields=NCTId`)
@@ -392,9 +431,11 @@ async function run(rawQuery, extraTerms) {
     const target = await resolveTarget(q);
     if (!target) { setStatus(`No target matching "${q}" was found. Try the gene symbol (for example TNFRSF17 for BCMA).`, true); return; }
 
-    const terms = [...new Set([q, target.approvedSymbol, ...(extraTerms || [])].map(t => t.trim()).filter(Boolean))]
+    const allSyn = [...new Set((target.symbolSynonyms || []).map(s => s.label))];
+    const base = [q, target.approvedSymbol, ...(extraTerms || [])].map(t => t.trim()).filter(Boolean);
+    const terms = [...base, ...spellingVariants(base, allSyn)]
       .filter((t, i, a) => a.findIndex(x => x.toLowerCase() === t.toLowerCase()) === i);
-    const synonyms = [...new Set((target.symbolSynonyms || []).map(s => s.label))]
+    const synonyms = allSyn
       .filter(s => s.length >= 3 && !/[\/ ]/.test(s) && !terms.some(t => t.toLowerCase() === s.toLowerCase()));
 
     const now = new Date().getFullYear();
@@ -402,11 +443,24 @@ async function run(rawQuery, extraTerms) {
 
     // Curated drugs
     const rows = ((target.drugAndClinicalCandidates || {}).rows || []).map(r => r.drug);
-    const seen = new Set();
-    const known = rows.filter(d => !seen.has(d.id) && seen.add(d.id)).map(d => ({
-      id: d.id, name: titleCase(d.name), type: typeLabel(d.drugType), otStage: d.maximumClinicalStage,
-      allNames: [d.name, ...(d.synonyms || []).map(s => s.label), ...(d.tradeNames || []).map(s => s.label)]
-    }));
+    // One entry per drug: salt forms (e.g. obatoclax mesylate) merge into the parent, keeping the highest stage.
+    const groups = new Map();
+    for (const d of rows) {
+      const base = baseDrugName(d.name);
+      const g = groups.get(base) || { id: d.id, ids: [], name: titleCase(base), type: typeLabel(d.drugType), otStage: null, allNames: [] };
+      if (!g.ids.includes(d.id)) g.ids.push(d.id);
+      if ((OT_RANK[d.maximumClinicalStage] || 0) > (OT_RANK[g.otStage] || 0)) { g.otStage = d.maximumClinicalStage; g.id = d.id; }
+      g.allNames.push(d.name, ...(d.synonyms || []).map(s => s.label), ...(d.tradeNames || []).map(s => s.label));
+      groups.set(base, g);
+    }
+    const known = [...groups.values()];
+    // Show the nonproprietary name when the curated record is filed under a code (APG-2575 -> Lisaftoclax).
+    for (const g of known) {
+      if (/\d/.test(g.name)) {
+        const inn = g.allNames.find(n => /^[A-Za-z]{6,}$/.test(n) && !SALTS.test(" " + n));
+        if (inn) g.name = titleCase(inn) + " (" + g.name.toUpperCase() + ")";
+      }
+    }
 
     setStatus("Checking FDA records, trials, literature, and meeting abstracts...");
     const needFda = known.filter(d => ["APPROVAL", "PHASE_4", "WITHDRAWAL"].includes(d.otStage));
@@ -424,19 +478,31 @@ async function run(rawQuery, extraTerms) {
     ]);
     needFda.forEach((d, i) => { d.fda = fdaRes[i] && !fdaRes[i].error ? fdaRes[i] : null; d.fdaError = !!(fdaRes[i] && fdaRes[i].error); });
 
+    // Cross-check "approved" claims that have no FDA record against ChEMBL's highest phase.
+    const noFda = needFda.filter(d => !d.fda && !d.fdaError);
+    if (noFda.length) {
+      const c = await getJSON(`https://www.ebi.ac.uk/chembl/api/data/molecule.json?molecule_chembl_id__in=${noFda.flatMap(d => d.ids).join(",")}&only=molecule_chembl_id,max_phase&limit=100`).catch(() => null);
+      const ph = new Map(((c && c.molecules) || []).map(m => [m.molecule_chembl_id, m.max_phase == null ? null : Number(m.max_phase)]));
+      noFda.forEach(d => { const v = d.ids.map(i => ph.get(i)).filter(x => typeof x === "number"); if (v.length) d.chemblPhase = Math.max(...v); });
+    }
+
     const ext = extractAgents(trials.studies, known, terms);
+    // Trial-found drugs with nonproprietary names may already be FDA-approved (records lag curated databases).
+    const innAgents = ext.agents.filter(a => a.isInn);
+    const innFda = await pool(innAgents, 4, a => fdaLookup(a.name.toLowerCase()));
+    innAgents.forEach((a, i) => { a.fda = innFda[i] && !innFda[i].error ? innFda[i] : null; });
     const drugs = [
       ...known.map(d => {
-        const st = stageFor(d.otStage, d.fda);
+        const st = stageFor(d.otStage, d.fda, d.chemblPhase);
         const nTrials = (ext.knownHits.get(d.id) || new Set()).size;
         return { name: d.name, type: d.type, stage: st.key, detail: st.detail + (d.fdaError ? " (FDA check failed; try again)" : ""),
-          source: "Open Targets" + (d.fda ? " + FDA" : ""), link: `https://platform.opentargets.org/drug/${d.id}`,
+          source: "Open Targets" + (d.fda ? " + FDA" : d.chemblPhase != null ? " + ChEMBL" : ""), link: `https://platform.opentargets.org/drug/${d.id}`,
           trialsLink: `https://clinicaltrials.gov/search?intr=${encodeURIComponent(d.name)}`, nTrials };
       }),
       ...ext.agents.map(a => ({
-        name: a.name, type: typeLabel(a.type.replace(/_/g, " ")), stage: "clin",
-        detail: `Highest phase in trials found: ${a.phase === "NA" ? "not stated" : PHASE_TEXT[a.phase]}`,
-        source: `ClinicalTrials.gov (${a.trials.size} trial${a.trials.size === 1 ? "" : "s"})`,
+        name: a.name, type: typeLabel(a.type.replace(/_/g, " ")), stage: a.fda ? "fda" : "clin",
+        detail: a.fda ? stageFor(null, a.fda).detail : `Highest phase in trials found: ${a.phase === "NA" ? "not stated" : PHASE_TEXT[a.phase]}`,
+        source: `ClinicalTrials.gov (${a.trials.size} trial${a.trials.size === 1 ? "" : "s"})${a.fda ? " + FDA" : ""}`,
         link: `https://clinicaltrials.gov/search?intr=${encodeURIComponent(a.name)}`, nTrials: a.trials.size, fromTrials: true
       }))
     ].sort((x, y) => STAGE[x.stage].order - STAGE[y.stage].order || x.name.localeCompare(y.name));

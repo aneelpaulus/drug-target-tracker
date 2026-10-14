@@ -36,8 +36,10 @@ All sources are free and public, and the page queries them directly from your br
 ## How the drug list is built
 
 1. Open Targets supplies drugs that experts have linked to the target, with each drug's highest stage for any disease.
-2. Every drug that has reached approval somewhere is checked against FDA records. If the FDA has a record, it's "FDA-approved". If not, it's "Approved outside US".
-3. ClinicalTrials.gov fills in newer agents that curated databases haven't caught up with. A trial drug is listed only when it has a code name and the trial describes it as acting on the target ("anti-CD38", "KRAS G12C inhibitor", "BCMA CAR-T"). A trial that only names the target as patient context ("for KRAS-mutant tumors") doesn't count. Trial drugs that match a known drug are folded into that drug.
+2. Every drug that has reached approval somewhere is checked against FDA records. If the FDA has a record, it's "FDA-approved". If not, ChEMBL is asked for a second opinion: only when ChEMBL also records an approval is it labeled "Approved outside US". Otherwise it shows the highest trial phase.
+3. ClinicalTrials.gov fills in newer agents that curated databases haven't caught up with. A trial drug is listed when the trial describes it as acting on the target, either in the drug's own description ("anti-CD38", "BCMA CAR-T") or in the trial's title or summary ("the BCL2 inhibitor sonrotoclax", "lisaftoclax, a novel Bcl-2 inhibitor"). A trial that only mentions the target as patient context ("for KRAS-mutant tumors"), or lists drugs side by side, doesn't count. Trial drugs that match a known drug are folded into that drug.
+4. Trial-found drugs with proper names are also checked against FDA records, since new approvals can reach the FDA database before the curated ones (sonrotoclax is an example).
+5. Spellings the target's own synonym list treats as the same, such as BCL2 and Bcl-2, are searched together. Salt forms (obatoclax mesylate) are merged into the parent drug.
 
 ## Limitations
 
@@ -48,6 +50,7 @@ All sources are free and public, and the page queries them directly from your br
 - **ASCO meeting abstracts** are covered through the *Journal of Clinical Oncology* supplements, which hold the annual meeting and the major symposia.
 - Very busy targets (like KRAS in AACR abstracts) hit a cap of 1,000 items per meeting, which the page marks with a "+".
 - Crossref allows one request per second, so a search takes 10 to 30 seconds.
+- **Approvals outside the US can lag.** "Approved outside US" relies on Open Targets and ChEMBL, which can trail by a year or more. For example, lisaftoclax was approved in China in July 2025 but still shows as Phase 3. No free database of non-US approvals is available to check against.
 - The "Approved outside US" label depends on the FDA lookup. A drug approved in the US under an unusual name could be mislabeled. The details column says which record was used.
 
 ## Run your own copy
