@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drug Target Tracker</title>
+<meta name="description" content="Type a drug target and see every drug aimed at it, labeled by development stage, plus publications, preprints, and conference abstracts. Runs entirely in your browser.">
+<style>
+  :root {
+    --bg: #f6f6f3; --card: #fcfcfb; --text: #1c1c1e; --muted: #52514e; --line: #e1e1dc;
+    --accent: #1d5c86; --accent-text: #ffffff; --track: #ecebe6; --bar: #2a78d6;
+    --fda: #1d6f42; --fdabg: #e5f3eb;
+    --exus: #1d5c86; --exusbg: #e4eef6;
+    --clin: #7d5300; --clinbg: #fcf0d6;
+    --pre: #5b3fb3; --prebg: #eeeafb;
+    --unk: #4a4a4a; --unkbg: #ececec;
+    --bad: #9e2428;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121314; --card: #1a1a19; --text: #f0efec; --muted: #c3c2b7; --line: #34342f;
+      --accent: #5aa3d6; --accent-text: #0b1620; --track: #2a2a27; --bar: #3987e5;
+      --fda: #7fd3a3; --fdabg: #183225;
+      --exus: #8cc3ea; --exusbg: #172a39;
+      --clin: #f0c46b; --clinbg: #3a2e14;
+      --pre: #b9a9f5; --prebg: #2a2342;
+      --unk: #c8c8c8; --unkbg: #2c2d30;
+      --bad: #f09a9d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 30px 0 8px; }
+  h3 { font-size: 1rem; margin: 0 0 4px; }
+  .lede { color: var(--muted); margin: 0 0 18px; }
+  label { font-weight: 600; display: block; margin-bottom: 6px; }
+  input[type=text] { font: inherit; background: var(--card); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; flex: 1; min-width: 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 0; }
+  .searchrow { display: flex; gap: 8px; }
+  button { font: inherit; border-radius: 10px; padding: 10px 16px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button.small { padding: 4px 10px; font-size: 0.85rem; border-radius: 999px; }
+  button:disabled { opacity: 0.55; cursor: default; }
+  .hint { color: var(--muted); font-size: 0.85rem; }
+  .status { color: var(--muted); font-size: 0.9rem; min-height: 1.4em; }
+  .status.err { color: var(--bad); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .targetcard { margin-top: 16px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+  .tiles { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin: 10px 0; }
+  .tile .num { font-size: 1.5rem; font-weight: 700; }
+  .badge { display: inline-block; font-size: 0.78rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+  .b-fda { color: var(--fda); background: var(--fdabg); }
+  .b-exus { color: var(--exus); background: var(--exusbg); }
+  .b-clin { color: var(--clin); background: var(--clinbg); }
+  .b-pre { color: var(--pre); background: var(--prebg); }
+  .b-unk { color: var(--unk); background: var(--unkbg); }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.8rem; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  td.name { font-weight: 600; }
+  td .sub { color: var(--muted); font-size: 0.8rem; font-weight: 400; }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .filters button.on, .tabs button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .charts { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .chart { width: 100%; height: auto; display: block; }
+  .chart text { fill: var(--muted); font-size: 22px; }
+  .chart .grid { stroke: var(--line); stroke-width: 1; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+  .tabs button { padding: 6px 12px; font-size: 0.85rem; }
+  .item { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .item:last-child { border-bottom: none; }
+  .item a { color: var(--text); text-decoration: none; font-weight: 600; }
+  .item a:hover { text-decoration: underline; }
+  .item .meta { color: var(--muted); font-size: 0.82rem; }
+  a { color: var(--accent); }
+  .tip { position: fixed; pointer-events: none; background: var(--text); color: var(--bg); padding: 6px 10px;
+    border-radius: 8px; font-size: 0.82rem; display: none; z-index: 10; }
+  footer { margin-top: 36px; color: var(--muted); font-size: 0.82rem; }
+  details summary { cursor: pointer; }
+  @media (max-width: 640px) {
+    .tablewrap { border: none; background: none; overflow: visible; }
+    table, tbody, tr, td { display: block; width: 100%; }
+    thead { display: none; }
+    tr { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+    td { border: none; padding: 3px 0; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Drug Target Tracker</h1>
+  <p class="lede">Type a drug target, such as a protein or gene name, to see every drug aimed at it with its development stage, and the latest research on it from PubMed, preprint servers, and major oncology and hematology meetings.</p>
+
+  <label for="q">Target</label>
+  <div class="searchrow">
+    <input type="text" id="q" placeholder="e.g. CD38, BCMA, KRAS, PD-L1" autocomplete="off">
+    <button class="primary" id="go">Search</button>
+  </div>
+  <div class="row">
+    <span class="hint">Examples:</span>
+    <button class="small ex">CD38</button><button class="small ex">SLAMF7</button><button class="small ex">BCMA</button><button class="small ex">KRAS</button>
+  </div>
+  <div class="status" id="status" aria-live="polite"></div>
+
+  <section id="out" hidden>
+    <div class="card targetcard">
+      <h3 id="tName"></h3>
+      <div class="hint" id="tTerms"></div>
+      <div class="chips" id="tSyn"></div>
+    </div>
+
+    <h2>Drugs aimed at this target</h2>
+    <div class="tiles" id="stageTiles"></div>
+    <div class="filters" id="stageFilters"></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Drug</th><th>Stage</th><th>Details</th><th>Source</th></tr></thead>
+      <tbody id="drugRows"></tbody>
+    </table></div>
+    <div class="row"><button id="more">Show all</button><button id="csv">Download drug list (CSV)</button></div>
+    <p class="hint" id="unnamedNote"></p>
+
+    <h2>Research activity, last 10 years</h2>
+    <p class="hint">Counts of items that mention the target. Each chart has its own scale. The current year is incomplete.</p>
+    <div class="charts" id="charts"></div>
+
+    <h2>Latest items</h2>
+    <div class="tabs" id="tabs"></div>
+    <div class="card" id="items"></div>
+    <p class="hint" id="gapNote"></p>
+  </section>
+
+  <footer>
+    <p><strong>Stage labels.</strong> FDA-approved: an FDA approval or license record exists (earliest approval date shown when available). Approved outside US: approved by another regulator, with no FDA record found. Clinical / investigational: tested in people but not approved anywhere. Preclinical: lab or animal work only. Labels come from Open Targets (which draws on ChEMBL), FDA records via openFDA, and ClinicalTrials.gov, and are automatic, so confirm anything important.</p>
+    <p><strong>Sources.</strong> Drugs: Open Targets Platform, openFDA (Drugs@FDA), ClinicalTrials.gov. Literature: PubMed and preprints (bioRxiv, medRxiv, and others) via Europe PMC. Meeting abstracts via Crossref: ASCO (Journal of Clinical Oncology supplements), ASH (Blood supplements), AACR (Cancer Research supplements), AACR-NCI-EORTC (Molecular Cancer Therapeutics supplements), ESMO (Annals of Oncology supplements), and EHA (HemaSphere supplements through 2023). Abstracts are matched on title only.</p>
+    <p><strong>Privacy.</strong> Your search goes only to these public services. Nothing is stored. Not affiliated with any of these organizations. For research and education only.</p>
+    <p>Open source under the MIT License. Built by Aneel Paulus, MD, MS.</p>
+  </footer>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+/* ---------- Pure helpers (no network, testable) ---------- */
+const YEARS = 10;
+const STAGE = {
+  fda:  { label: "FDA-approved", cls: "b-fda", order: 1 },
+  exus: { label: "Approved outside US", cls: "b-exus", order: 2 },
+  clin: { label: "Clinical / investigational", cls: "b-clin", order: 3 },
+  pre:  { label: "Preclinical", cls: "b-pre", order: 4 },
+  unk:  { label: "Stage unknown", cls: "b-unk", order: 5 }
+};
+const PHASE_TEXT = {
+  APPROVAL: "Approved", PHASE_4: "Phase 4", PHASE_3: "Phase 3", PHASE_2_3: "Phase 2/3", PHASE_2: "Phase 2",
+  PHASE_1_2: "Phase 1/2", PHASE_1: "Phase 1", EARLY_PHASE_1: "Early phase 1", EARLY_PHASE1: "Early phase 1",
+  PHASE1: "Phase 1", PHASE2: "Phase 2", PHASE3: "Phase 3", PHASE4: "Phase 4", PRECLINICAL: "Preclinical"
+};
+const PHASE_RANK = { NA: 0, EARLY_PHASE1: 1, PHASE1: 2, PHASE2: 3, PHASE3: 4, PHASE4: 5 };
+
+function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function termRegex(terms) {
+  return new RegExp("(?<![A-Za-z0-9])(" + terms.map(escRe).join("|") + ")(?![A-Za-z0-9])", "i");
+}
+// True when text describes something acting on the target (anti-X, X inhibitor, X-directed CAR-T, HexaBody-X),
+// not just mentioning it as patient context ("for KRAS-mutant tumors").
+function actsOnTarget(text, terms) {
+  const T = "(?:" + terms.map(escRe).join("|") + ")";
+  const re = new RegExp(
+    `anti[-\\s]?${T}(?![A-Za-z0-9])` +
+    `|targeting\\s+(?:the\\s+)?${T}(?![A-Za-z0-9])` +
+    `|[A-Za-z]-${T}(?![A-Za-z0-9])` +
+    `|(?<![A-Za-z0-9])${T}\\s?[x×]\\s?CD3(?![0-9])` +
+    `|(?<![A-Za-z0-9])${T}(?:\\s?[A-Z]\\d+[A-Z])?(?:\\s?(?:x|\\/|and)\\s?[A-Z0-9-]+)?[-\\s]*(?:dual|directed|targeted|targeting|specific|inhibitor|degrader|CAR|bispecific|antibod|ADC|mAb|monoclonal|vaccine|T[- ]?cell|NK|engager|radioligand|conjugate|siRNA|antisense)`, "i");
+  return re.test(text);
+}
+function normKey(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
+
+// Stage for a curated drug, from its highest stage anywhere and whether an FDA record exists.
+function stageFor(otStage, fda) {
+  if (fda && fda.date) return { key: "fda", detail: `Earliest FDA approval on record: ${fmtDate(fda.date)}${fda.brand ? " (" + titleCase(fda.brand) + ")" : ""}` };
+  if (fda) return { key: "fda", detail: `FDA-licensed${fda.brand ? " as " + titleCase(fda.brand) : ""} (${fda.app}); approval date not in this record` };
+  if (otStage === "APPROVAL" || otStage === "PHASE_4") return { key: "exus", detail: "Approved by a non-US regulator; no FDA approval record found" };
+  if (otStage === "WITHDRAWAL") return { key: "exus", detail: "Approved outside the US at some point, later withdrawn; no FDA record found" };
+  if (otStage === "PRECLINICAL") return { key: "pre", detail: "Lab or animal studies only" };
+  if (PHASE_TEXT[otStage]) return { key: "clin", detail: "Highest stage reached: " + PHASE_TEXT[otStage] };
+  return { key: "unk", detail: "Stage not recorded" };
+}
+
+// Earliest original FDA approval for a drug name, skipping generics (ANDAs).
+function fdaFromResults(results, name) {
+  const n = name.toLowerCase();
+  let best = null;
+  for (const a of results || []) {
+    if (/^ANDA/.test(a.application_number)) continue;
+    const ings = (a.products || []).flatMap(p => (p.active_ingredients || []).map(i => i.name.toLowerCase()));
+    if (!ings.some(i => i === n || i.startsWith(n + " ") || i.startsWith(n + "-"))) continue;
+    for (const s of a.submissions || []) {
+      if (s.submission_type === "ORIG" && s.submission_status === "AP" && s.submission_status_date) {
+        if (!best || s.submission_status_date < best.date) {
+          best = { date: s.submission_status_date, app: a.application_number, brand: ((a.products || [])[0] || {}).brand_name || "" };
+        }
+      }
+    }
+  }
+  return best;
+}
+
+function fdaFromLabels(results, name) {
+  const n = name.toLowerCase();
+  for (const r of results || []) {
+    const o = r.openfda || {};
+    const gens = (o.generic_name || []).map(g => g.toLowerCase());
+    const app = (o.application_number || []).find(a => /^(BLA|NDA)/.test(a));
+    if (app && gens.some(g => g === n || g.startsWith(n + " ") || g.startsWith(n + "-"))) return { date: null, app, brand: (o.brand_name || [])[0] || "" };
+  }
+  return null;
+}
+
+const NOT_CODES = /^(CD|IL|HLA|NCT|PD|PDL|CTLA|HER|TNF|CXCR|CCR|MUC|CLL|FGFR|VEGFR|VEGF|EGFR|KRAS|BRAF|TP|GPRC|FCRH|FCRL|SLAMF|TIM|LAG|B7H|CLDN|DLL|TROP|NKG|IGF|BCMA|COVID|SARS|HIV|HPV|EBV|CMV|ECOG|AML|ALL|MM|CAR|NK|DNA|RNA|BCL|JAK|BTK|ALK|ROS|MET|RET|KIT|FLT|IDH|PARP|ATR|WEE|CDK|AKT|MTOR|PI3K|ERK|MEK|SHP|SOS|HDAC|DOTA|LU|GA|ZR|AT|IV|SC|PO|MG|ML|KG|DAY|WEEK|GROUP|ARM|COHORT|PART|STAGE|LEVEL|DOSE|GNA|GNAQ|BRCA|NRAS|HRAS|ERBB|NTRK|ESR|AR|STK|KEAP|SMAD|PTEN|PIK|ATM|FBXW|APC|NF|RB|MYC|CDKN|ARID|EZH|DNMT|TET|ASXL|NPM|SF|U|LBA|ASCO|ESMO|ASH|AACR)$/i;
+
+// Named agents (code names or nonproprietary names) found in trial interventions that mention the target.
+// Interventions naming a known drug are attributed to that drug instead.
+function extractAgents(studies, knownDrugs, terms) {
+  const tRe = termRegex(terms);
+  const keys = [];
+  for (const d of knownDrugs) for (const n of d.allNames) { const k = normKey(n); if (k.length >= 5) keys.push([k, d]); }
+  const agents = new Map(), unnamed = new Set(), knownHits = new Map();
+  for (const s of studies || []) {
+    const ps = s.protocolSection || {};
+    const nct = (ps.identificationModule || {}).nctId;
+    const phases = (ps.designModule || {}).phases || ["NA"];
+    const ph = phases.reduce((a, b) => (PHASE_RANK[b] || 0) > (PHASE_RANK[a] || 0) ? b : a, "NA");
+    for (const iv of (ps.armsInterventionsModule || {}).interventions || []) {
+      if (!["DRUG", "BIOLOGICAL", "GENETIC", "COMBINATION_PRODUCT"].includes(iv.type)) continue;
+      const nameTxt = [iv.name || ""].concat(iv.otherNames || []).join(" ; ");
+      const nk = normKey(nameTxt);
+      const known = keys.find(([k]) => nk.includes(k));
+      if (known) { const set = knownHits.get(known[1].id) || new Set(); set.add(nct); knownHits.set(known[1].id, set); continue; }
+      const inName = tRe.test(nameTxt);
+      const acts = actsOnTarget(nameTxt + " ; " + (iv.description || ""), terms);
+      if (!inName && !acts) continue;
+      const found = [];
+      for (const m of nameTxt.matchAll(/\b([A-Z]{1,6})[- ]?(\d{2,6}[A-Z]?)\b/g)) {
+        if (NOT_CODES.test(m[1]) || /^[A-Z]\d{2,4}[A-Z]$/.test(m[0]) || terms.some(t => normKey(t) === normKey(m[0]))) continue;
+        found.push({ key: (m[1] + m[2]).toUpperCase(), label: m[0] });
+      }
+      if (!found.length) { if (inName) unnamed.add(nct); continue; }
+      const f = found[0];
+      const a = agents.get(f.key) || { key: f.key, name: f.label, type: iv.type, trials: new Set(), phase: "NA" };
+      a.trials.add(nct);
+      if ((PHASE_RANK[ph] || 0) > (PHASE_RANK[a.phase] || 0)) a.phase = ph;
+      agents.set(f.key, a);
+    }
+  }
+  return { agents: [...agents.values()], unnamed, knownHits };
+}
+
+// Meeting abstract sources on Crossref, with a test that separates abstracts from full articles.
+const ESMO_CODE = /^((LBA|[A-Z]{1,4})?\d+[A-Z]{0,4}(-\d+)?|LBA)\s/;
+const MEETINGS = [
+  { id: "asco", name: "ASCO", issn: "0732-183X", isAbstract: it => /_suppl/i.test(it.DOI) },
+  { id: "ash", name: "ASH", issn: "0006-4971", isAbstract: it => /blood\.v\d+\.suppl_\d+\.|blood-\d{4}-99-\d+|blood-\d{4}-\d{5,}$/i.test(it.DOI) },
+  { id: "aacr", name: "AACR", issn: "1538-7445", isAbstract: it => /1538-7445\./i.test(it.DOI) },
+  { id: "eortc", name: "AACR-NCI-EORTC", issn: "1538-8514", isAbstract: it => /\.targ-/i.test(it.DOI) },
+  { id: "esmo", name: "ESMO", issn: "0923-7534", isAbstract: it => ESMO_CODE.test(cleanTitle(it.title)) },
+  { id: "eha", name: "EHA", issn: "2572-9241", isAbstract: it => /01\.hs9\./i.test(it.DOI) }
+];
+
+function cleanTitle(t) {
+  const s = Array.isArray(t) ? (t[0] || "") : String(t || "");
+  return s.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+}
+function yearOf(it) {
+  const p = it.published || it.issued || {};
+  return ((p["date-parts"] || [[]])[0] || [])[0] || null;
+}
+function filterAbstracts(items, meeting, terms) {
+  const tRe = termRegex(terms);
+  return (items || []).filter(it => meeting.isAbstract(it) && tRe.test(cleanTitle(it.title)))
+    .map(it => ({ title: cleanTitle(it.title), year: yearOf(it), url: "https://doi.org/" + it.DOI, source: meeting.name }));
+}
+function countByYear(items, years) {
+  const m = new Map(years.map(y => [y, 0]));
+  for (const it of items) if (m.has(it.year)) m.set(it.year, m.get(it.year) + 1);
+  return years.map(y => ({ year: y, count: m.get(y) }));
+}
+
+function notFuture(r) { return !r.firstPublicationDate || r.firstPublicationDate <= new Date().toISOString().slice(0, 10); }
+function typeLabel(t) { return /^(gene|genetic)$/i.test(t || "") ? "Cell or gene therapy" : titleCase(t || ""); }
+function fmtDate(d) { return d && d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}` : d || ""; }
+function titleCase(s) { return String(s || "").toLowerCase().replace(/(^|[\s\-\/(])([a-z])/g, (m, a, b) => a + b.toUpperCase()); }
+/* ---------- End pure helpers ---------- */
+
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let state = null, stageFilter = "all", activeTab = null, showAll = false;
+const FIRST_ROWS = 20;
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function setStatus(msg, err) { $("status").textContent = msg || ""; $("status").className = "status" + (err ? " err" : ""); }
+
+async function getJSON(url, opts, ms = 45000) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  try {
+    const r = await fetch(url, Object.assign({ signal: c.signal }, opts || {}));
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+async function pool(items, n, fn) {
+  const out = new Array(items.length); let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length) { const k = i++; try { out[k] = await fn(items[k], k); } catch (e) { out[k] = { error: e }; } }
+  }));
+  return out;
+}
+
+const OT = "https://api.platform.opentargets.org/api/v4/graphql";
+const otQuery = (query, variables) => getJSON(OT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query, variables }) });
+
+async function resolveTarget(q) {
+  const s = await otQuery(`query($q:String!){ search(queryString:$q, entityNames:["target"], page:{index:0,size:5}){ hits { id name } } }`, { q });
+  const hits = (((s || {}).data || {}).search || {}).hits || [];
+  if (!hits.length) return null;
+  const exact = hits.find(h => h.name.toLowerCase() === q.toLowerCase()) || hits[0];
+  const t = await otQuery(`query($id:String!){ target(ensemblId:$id){ id approvedSymbol approvedName symbolSynonyms { label }
+    drugAndClinicalCandidates { rows { drug { id name drugType maximumClinicalStage synonyms { label } tradeNames { label } } } } } }`, { id: exact.id });
+  return ((t || {}).data || {}).target || null;
+}
+
+// Drugs@FDA first (has approval dates). Cell and gene therapies are licensed by a different FDA
+// center and are missing there, so fall back to FDA drug labels, which do include them.
+async function fdaLookup(name) {
+  const r = await getJSON(`https://api.fda.gov/drug/drugsfda.json?search=${encodeURIComponent(`products.active_ingredients.name:"${name}"`)}&limit=100`);
+  const hit = fdaFromResults(r && r.results, name);
+  if (hit) return hit;
+  const l = await getJSON(`https://api.fda.gov/drug/label.json?search=${encodeURIComponent(`openfda.generic_name:"${name}"`)}&limit=5`);
+  return fdaFromLabels(l && l.results, name);
+}
+
+async function fetchTrials(terms) {
+  const q = terms.map(t => `"${t}"`).join(" OR ");
+  const f = "NCTId,BriefTitle,Phase,OverallStatus,InterventionName,InterventionType,InterventionOtherName,InterventionDescription";
+  const [intr, any] = await Promise.all([
+    getJSON(`https://clinicaltrials.gov/api/v2/studies?query.intr=${encodeURIComponent(q)}&pageSize=1000&fields=${f}`),
+    getJSON(`https://clinicaltrials.gov/api/v2/studies?query.term=${encodeURIComponent(q)}&pageSize=1&countTotal=true&fields=NCTId`)
+  ]);
+  return { studies: (intr && intr.studies) || [], total: (any && any.totalCount) || 0, query: q };
+}
+
+function epmcQuery(terms, src) {
+  return "(" + terms.map(t => `TITLE_ABS:"${t}"`).join(" OR ") + `) AND SRC:${src}`;
+}
+const EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
+async function epmcCount(q) {
+  const r = await getJSON(`${EPMC}?query=${encodeURIComponent(q)}&format=json&pageSize=1&resultType=idlist`);
+  return (r && r.hitCount) || 0;
+}
+async function epmcLatest(q, n) {
+  const r = await getJSON(`${EPMC}?query=${encodeURIComponent(q)}&format=json&pageSize=${n}&resultType=lite&sort=${encodeURIComponent("FIRST_PDATE_D desc")}`);
+  return ((r && r.resultList && r.resultList.result) || []);
+}
+
+// Crossref allows one request at a time, about one per second, so meetings are fetched in turn with one retry.
+async function crossrefMeeting(m, terms, fromYear) {
+  const url = `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(terms.join(" "))}&filter=issn:${m.issn},from-pub-date:${fromYear}&rows=1000&select=DOI,title,published,issued`;
+  let r;
+  try { r = await getJSON(url, null, 60000); }
+  catch (e) { await sleep(4000); r = await getJSON(url, null, 60000); }
+  await sleep(1100);
+  const items = (r && r.message && r.message.items) || [];
+  return { abstracts: filterAbstracts(items, m, terms), capped: items.length >= 1000 };
+}
+
+async function run(rawQuery, extraTerms) {
+  const q = rawQuery.trim();
+  if (!q) { setStatus("Type a target first."); return; }
+  $("go").disabled = true;
+  $("out").hidden = true;
+  try {
+    setStatus("Finding the target...");
+    const target = await resolveTarget(q);
+    if (!target) { setStatus(`No target matching "${q}" was found. Try the gene symbol (for example TNFRSF17 for BCMA).`, true); return; }
+
+    const terms = [...new Set([q, target.approvedSymbol, ...(extraTerms || [])].map(t => t.trim()).filter(Boolean))]
+      .filter((t, i, a) => a.findIndex(x => x.toLowerCase() === t.toLowerCase()) === i);
+    const synonyms = [...new Set((target.symbolSynonyms || []).map(s => s.label))]
+      .filter(s => s.length >= 3 && !/[\/ ]/.test(s) && !terms.some(t => t.toLowerCase() === s.toLowerCase()));
+
+    const now = new Date().getFullYear();
+    const years = Array.from({ length: YEARS }, (_, i) => now - YEARS + 1 + i);
+
+    // Curated drugs
+    const rows = ((target.drugAndClinicalCandidates || {}).rows || []).map(r => r.drug);
+    const seen = new Set();
+    const known = rows.filter(d => !seen.has(d.id) && seen.add(d.id)).map(d => ({
+      id: d.id, name: titleCase(d.name), type: typeLabel(d.drugType), otStage: d.maximumClinicalStage,
+      allNames: [d.name, ...(d.synonyms || []).map(s => s.label), ...(d.tradeNames || []).map(s => s.label)]
+    }));
+
+    setStatus("Checking FDA records, trials, literature, and meeting abstracts...");
+    const needFda = known.filter(d => ["APPROVAL", "PHASE_4", "WITHDRAWAL"].includes(d.otStage));
+    const litTasks = [
+      ...years.map(y => () => epmcCount(epmcQuery(terms, "MED") + ` AND PUB_YEAR:${y}`)),
+      ...years.map(y => () => epmcCount(epmcQuery(terms, "PPR") + ` AND PUB_YEAR:${y}`))
+    ];
+    const [fdaRes, trials, litCounts, pubLatest, ppLatest, meetings] = await Promise.all([
+      pool(needFda, 4, d => fdaLookup(d.name.toLowerCase())),
+      fetchTrials(terms).catch(() => ({ studies: [], total: 0, error: true, query: "" })),
+      pool(litTasks, 5, f => f()),
+      epmcLatest(epmcQuery(terms, "MED"), 40).catch(() => null),
+      epmcLatest(epmcQuery(terms, "PPR"), 40).catch(() => null),
+      pool(MEETINGS, 1, m => crossrefMeeting(m, terms, years[0]))
+    ]);
+    needFda.forEach((d, i) => { d.fda = fdaRes[i] && !fdaRes[i].error ? fdaRes[i] : null; d.fdaError = !!(fdaRes[i] && fdaRes[i].error); });
+
+    const ext = extractAgents(trials.studies, known, terms);
+    const drugs = [
+      ...known.map(d => {
+        const st = stageFor(d.otStage, d.fda);
+        const nTrials = (ext.knownHits.get(d.id) || new Set()).size;
+        return { name: d.name, type: d.type, stage: st.key, detail: st.detail + (d.fdaError ? " (FDA check failed; try again)" : ""),
+          source: "Open Targets" + (d.fda ? " + FDA" : ""), link: `https://platform.opentargets.org/drug/${d.id}`,
+          trialsLink: `https://clinicaltrials.gov/search?intr=${encodeURIComponent(d.name)}`, nTrials };
+      }),
+      ...ext.agents.map(a => ({
+        name: a.name, type: typeLabel(a.type.replace(/_/g, " ")), stage: "clin",
+        detail: `Highest phase in trials found: ${a.phase === "NA" ? "not stated" : PHASE_TEXT[a.phase]}`,
+        source: `ClinicalTrials.gov (${a.trials.size} trial${a.trials.size === 1 ? "" : "s"})`,
+        link: `https://clinicaltrials.gov/search?intr=${encodeURIComponent(a.name)}`, nTrials: a.trials.size, fromTrials: true
+      }))
+    ].sort((x, y) => STAGE[x.stage].order - STAGE[y.stage].order || x.name.localeCompare(y.name));
+
+    const toSeries = arr => years.map((y, i) => ({ year: y, count: typeof arr[i] === "number" ? arr[i] : 0 }));
+    const meetingAbs = meetings.flatMap(m => (m && m.abstracts) || []);
+    state = {
+      q, target, terms, synonyms, drugs, trials, unnamed: ext.unnamed, years,
+      series: {
+        pub: toSeries(litCounts.slice(0, YEARS)),
+        pp: toSeries(litCounts.slice(YEARS)),
+        mtg: countByYear(meetingAbs, years)
+      },
+      lists: {
+        pubmed: (pubLatest || []).filter(notFuture).slice(0, 25).map(r => ({ title: cleanTitle(r.title), year: r.pubYear, meta: [r.journalTitle, r.firstPublicationDate].filter(Boolean).join(" · "), url: r.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/` : (r.doi ? "https://doi.org/" + r.doi : "") })),
+        preprints: (ppLatest || []).filter(notFuture).slice(0, 25).map(r => ({ title: cleanTitle(r.title), year: r.pubYear, meta: [(r.bookOrReportDetails || {}).publisher || "Preprint", r.firstPublicationDate].filter(Boolean).join(" · "), url: r.doi ? "https://doi.org/" + r.doi : `https://europepmc.org/article/PPR/${r.id}` })),
+        meetings: meetingAbs.sort((a, b) => (b.year || 0) - (a.year || 0)).slice(0, 60).map(a => ({ ...a, meta: `${a.source} · ${a.year || ""}` }))
+      },
+      meetingCounts: MEETINGS.map((m, i) => ({ name: m.name, n: ((meetings[i] || {}).abstracts || []).length, capped: (meetings[i] || {}).capped, error: !!(meetings[i] || {}).error })),
+      litError: litCounts.some(c => c && c.error) || !pubLatest || !ppLatest
+    };
+    stageFilter = "all"; activeTab = "pubmed"; showAll = false;
+    render();
+    const problems = [];
+    if (trials.error) problems.push("ClinicalTrials.gov");
+    if (state.litError) problems.push("Europe PMC (some counts)");
+    const badMeet = state.meetingCounts.filter(m => m.error).map(m => m.name);
+    if (badMeet.length) problems.push("Crossref for " + badMeet.join(", "));
+    setStatus(problems.length ? `Done, but these sources did not respond fully: ${problems.join("; ")}. Results may be incomplete; try again in a minute.` : "", !!problems.length);
+  } catch (e) {
+    setStatus("Something went wrong reaching the data sources. Please try again. (" + e.message + ")", true);
+  } finally {
+    $("go").disabled = false;
+  }
+}
+
+function render() {
+  const s = state;
+  $("out").hidden = false;
+  $("tName").textContent = `${s.target.approvedSymbol}: ${s.target.approvedName}`;
+  $("tTerms").textContent = "Searched for: " + s.terms.join(", ");
+  $("tSyn").innerHTML = s.synonyms.length
+    ? `<span class="hint">Also known as (tap to include):</span>` + s.synonyms.map(x => `<button class="small" data-syn="${esc(x)}">+ ${esc(x)}</button>`).join("")
+    : "";
+  $("tSyn").querySelectorAll("button").forEach(b => b.onclick = () => run(s.q, s.terms.slice(1).concat(b.dataset.syn)));
+
+  const counts = {};
+  s.drugs.forEach(d => { counts[d.stage] = (counts[d.stage] || 0) + 1; });
+  $("stageTiles").innerHTML = Object.keys(STAGE).filter(k => counts[k]).map(k =>
+    `<div class="card tile"><span class="badge ${STAGE[k].cls}">${STAGE[k].label}</span><div class="num">${counts[k]}</div></div>`).join("")
+    || `<div class="card">No drugs linked to this target were found.</div>`;
+  $("stageFilters").innerHTML = s.drugs.length ? ["all", ...Object.keys(STAGE).filter(k => counts[k])].map(k =>
+    `<button class="small ${stageFilter === k ? "on" : ""}" data-k="${k}">${k === "all" ? "All" : STAGE[k].label}</button>`).join("") : "";
+  $("stageFilters").querySelectorAll("button").forEach(b => b.onclick = () => { stageFilter = b.dataset.k; render(); });
+
+  const visible = s.drugs.filter(d => stageFilter === "all" || d.stage === stageFilter);
+  $("more").hidden = showAll || visible.length <= FIRST_ROWS;
+  $("more").textContent = `Show all ${visible.length}`;
+  $("drugRows").innerHTML = (showAll ? visible : visible.slice(0, FIRST_ROWS)).map(d => `
+    <tr>
+      <td class="name"><a href="${esc(d.link)}" target="_blank" rel="noopener">${esc(d.name)}</a><div class="sub">${esc(d.type)}</div></td>
+      <td><span class="badge ${STAGE[d.stage].cls}">${STAGE[d.stage].label}</span></td>
+      <td>${esc(d.detail)}${d.fromTrials ? `<div class="sub">Found by code name in trial records; confirm it targets ${esc(s.terms[0])}.</div>` : ""}</td>
+      <td class="sub">${esc(d.source)}${d.trialsLink ? `<br><a href="${esc(d.trialsLink)}" target="_blank" rel="noopener">Trials</a>` : ""}</td>
+    </tr>`).join("");
+
+  const q = encodeURIComponent(s.trials.query || s.terms[0]);
+  $("unnamedNote").innerHTML = `${s.trials.total.toLocaleString()} registered trials mention ${esc(s.target.approvedSymbol)}. ` +
+    (s.unnamed.size ? `${s.unnamed.size} of them test agents described only generically (for example "anti-${esc(s.terms[0])} CAR-T cells") and are not listed above. ` : "") +
+    `<a href="https://clinicaltrials.gov/search?term=${q}" target="_blank" rel="noopener">See all trials</a>. ` +
+    `Preclinical agents usually appear only in the research below, not in this table.`;
+
+  const pubTotal = s.series.pub.reduce((a, b) => a + b.count, 0);
+  const ppTotal = s.series.pp.reduce((a, b) => a + b.count, 0);
+  const mtTotal = s.series.mtg.reduce((a, b) => a + b.count, 0);
+  $("charts").innerHTML = [
+    ["PubMed articles", s.series.pub, pubTotal],
+    ["Preprints", s.series.pp, ppTotal],
+    ["Meeting abstracts", s.series.mtg, mtTotal]
+  ].map(([t, ser, tot]) => `<div class="card"><h3>${t}</h3><div class="hint">${tot.toLocaleString()} in ${s.years[0]} to ${s.years[s.years.length - 1]}</div>${barSvg(ser)}</div>`).join("");
+
+  const tabs = [["pubmed", "PubMed"], ["preprints", "Preprints"], ["meetings", "Meeting abstracts"]];
+  $("tabs").innerHTML = tabs.map(([k, l]) => `<button class="${activeTab === k ? "on" : ""}" data-t="${k}">${l}</button>`).join("");
+  $("tabs").querySelectorAll("button").forEach(b => b.onclick = () => { activeTab = b.dataset.t; render(); });
+  const list = s.lists[activeTab] || [];
+  $("items").innerHTML = list.length ? list.map(it => `
+    <div class="item"><a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a><div class="meta">${esc(it.meta)}</div></div>`).join("")
+    : `<p class="hint">Nothing found.</p>`;
+
+  const mc = s.meetingCounts.map(m => `${m.name} ${m.error ? "(no response)" : m.n + (m.capped ? "+" : "")}`).join(", ");
+  $("gapNote").innerHTML = `Meeting abstracts by meeting: ${esc(mc)}. Abstracts are matched on title only. ` +
+    `SITC abstracts and EHA abstracts from 2024 on are not individually indexed in any free database, so search them directly: ` +
+    `<a href="https://jitc.bmj.com/search/${encodeURIComponent(s.terms[0])}" target="_blank" rel="noopener">SITC (JITC)</a>, ` +
+    `<a href="https://library.ehaweb.org/eha/#!*menu=6*browseby=3*sortby=2*ces_id=0*search=${encodeURIComponent(s.terms[0])}" target="_blank" rel="noopener">EHA library</a>.`;
+}
+
+function barSvg(ser) {
+  const W = 600, H = 300, L = 70, R = 8, T = 14, B = 40;
+  const max = Math.max(1, ...ser.map(d => d.count));
+  const p = Math.pow(10, Math.floor(Math.log10(max)));
+  const top = Math.ceil(max / p) * p;
+  const y = v => T + (H - T - B) * (1 - v / top);
+  const step = (W - L - R) / ser.length, bw = Math.max(4, step - 6);
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">`;
+  [0, top / 2, top].forEach(t => { s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}"/><text x="${L - 8}" y="${y(t) + 7}" text-anchor="end">${Math.round(t).toLocaleString()}</text>`; });
+  ser.forEach((d, i) => {
+    const x = L + i * step + 3, h = Math.max(0, H - B - y(d.count));
+    s += `<rect x="${x}" y="${H - B - h}" width="${bw}" height="${h}" rx="3" fill="var(--bar)" data-tip="${d.year}: ${d.count.toLocaleString()}"/>`;
+    s += `<rect x="${x - 2}" y="${T}" width="${bw + 4}" height="${H - B - T}" fill="transparent" data-tip="${d.year}: ${d.count.toLocaleString()}"/>`;
+    if (i % 3 === 0 || i === ser.length - 1) s += `<text x="${x + bw / 2}" y="${H - 10}" text-anchor="middle">${d.year}</text>`;
+  });
+  return s + "</svg>";
+}
+
+function toCsv() {
+  const head = ["Drug", "Type", "Stage", "Details", "Source", "Link"];
+  const rows = state.drugs.map(d => [d.name, d.type, STAGE[d.stage].label, d.detail, d.source, d.link]);
+  return [head, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+}
+
+document.addEventListener("mousemove", e => {
+  const el = e.target.closest && e.target.closest("[data-tip]");
+  const tip = $("tip");
+  if (!el) { tip.style.display = "none"; return; }
+  tip.textContent = el.getAttribute("data-tip");
+  tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX + 12, window.innerWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top = (e.clientY + 14) + "px";
+});
+
+$("go").onclick = () => run($("q").value);
+$("q").addEventListener("keydown", e => { if (e.key === "Enter") run($("q").value); });
+document.querySelectorAll(".ex").forEach(b => b.onclick = () => { $("q").value = b.textContent; run(b.textContent); });
+$("more").onclick = () => { showAll = true; render(); };
+$("csv").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([toCsv()], { type: "text/csv" }));
+  a.download = `${state.target.approvedSymbol}-drugs.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+</script>
+</body>
+</html>
