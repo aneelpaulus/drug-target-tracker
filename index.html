@@ -92,6 +92,13 @@
     tr { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
     td { border: none; padding: 3px 0; }
   }
+  .kit { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; font-size: 0.85rem; margin: 0 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .kit a { color: var(--muted); text-decoration: none; }
+  .kit a:hover { color: var(--accent); text-decoration: underline; }
+  .kit a.here { color: var(--text); font-weight: 600; }
+  .kit a.home { color: var(--accent); font-weight: 700; }
+  .xlinks { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.88rem; margin-top: 6px; }
+  .xlinks a { color: var(--accent); }
 </style>
 <style>
 /* Medical AI Toolkit shared look (Nov 2026). Loaded after each page's own styles. */
@@ -196,6 +203,7 @@ footer details p{margin:8px 0 0;max-width:46em}
       <tbody id="drugRows"></tbody>
     </table></div>
     <div class="row"><button id="more">Show all</button><button id="csv">Download CSV</button></div>
+    <div class="xlinks" id="compareLink"></div>
     <p class="hint" id="unnamedNote"></p>
 
     <h2>Research over 10 years</h2>
@@ -597,6 +605,7 @@ async function run(rawQuery, extraTerms) {
       litError: litCounts.some(c => c && c.error) || !pubLatest || !ppLatest
     };
     stageFilter = "all"; activeTab = "pubmed"; showAll = false;
+    saveToAddress(q, extraTerms);
     render();
     const problems = [];
     if (trials.error) problems.push("ClinicalTrials.gov");
@@ -609,6 +618,24 @@ async function run(rawQuery, extraTerms) {
   } finally {
     $("go").disabled = false;
   }
+}
+
+// Keep the search in the web address so results can be shared, and other tools can link here.
+const KIT = "https://aneelpaulus.github.io/";
+function saveToAddress(q, extra) {
+  const p = new URLSearchParams({ target: q });
+  if (extra && extra.length) p.set("also", extra.join(","));
+  try { history.replaceState(null, "", "?" + p.toString()); } catch (e) {}
+}
+// The plain drug name for links: "Lisaftoclax (APG-2575)" -> "Lisaftoclax"
+function linkName(n) { return String(n).replace(/\s*\(.*\)\s*$/, "").trim(); }
+function drugLinks(d) {
+  if (d.stage !== "fda" && d.stage !== "exus") return "";
+  const n = linkName(d.name);
+  const out = [];
+  if (d.stage === "fda") out.push(`<a href="${KIT}drug-label-explainer/?drug=${encodeURIComponent(n)}">FDA label</a>`);
+  out.push(`<a href="${KIT}adverse-event-explorer/?drugs=${encodeURIComponent(n.toLowerCase())}">Reported side effects</a>`);
+  return `<div class="xlinks">${out.join("")}</div>`;
 }
 
 function render() {
@@ -630,12 +657,15 @@ function render() {
     `<button class="small ${stageFilter === k ? "on" : ""}" data-k="${k}">${k === "all" ? "All" : STAGE[k].label}</button>`).join("") : "";
   $("stageFilters").querySelectorAll("button").forEach(b => b.onclick = () => { stageFilter = b.dataset.k; render(); });
 
+  const approved = s.drugs.filter(d => d.stage === "fda").map(d => linkName(d.name).toLowerCase()).slice(0, 4);
+  $("compareLink").innerHTML = approved.length >= 2
+    ? `<a href="${KIT}adverse-event-explorer/?drugs=${encodeURIComponent(approved.join(","))}">Compare reported side effects of the FDA-approved drugs (${approved.length})</a>` : "";
   const visible = s.drugs.filter(d => stageFilter === "all" || d.stage === stageFilter);
   $("more").hidden = showAll || visible.length <= FIRST_ROWS;
   $("more").textContent = `Show all ${visible.length}`;
   $("drugRows").innerHTML = (showAll ? visible : visible.slice(0, FIRST_ROWS)).map(d => `
     <tr>
-      <td class="name"><a href="${esc(d.link)}" target="_blank" rel="noopener">${esc(d.name)}</a><div class="sub">${esc(d.type)}</div></td>
+      <td class="name"><a href="${esc(d.link)}" target="_blank" rel="noopener">${esc(d.name)}</a><div class="sub">${esc(d.type)}</div>${drugLinks(d)}</td>
       <td><span class="badge ${STAGE[d.stage].cls}">${STAGE[d.stage].label}</span></td>
       <td>${esc(d.detail)}${d.fromTrials ? `<div class="sub">Found by code name in trial records; confirm it targets ${esc(s.terms[0])}.</div>` : ""}</td>
       <td class="sub">${esc(d.source)}${d.trialsLink ? `<br><a href="${esc(d.trialsLink)}" target="_blank" rel="noopener">Trials</a>` : ""}</td>
@@ -708,6 +738,15 @@ document.addEventListener("mousemove", e => {
 $("go").onclick = () => run($("q").value);
 $("q").addEventListener("keydown", e => { if (e.key === "Enter") run($("q").value); });
 document.querySelectorAll(".ex").forEach(b => b.onclick = () => { $("q").value = b.textContent; run(b.textContent); });
+// Open with a search already filled in, e.g. ?target=CD38 (optionally &also=CS1,CD319)
+(() => {
+  const q = new URLSearchParams(location.search);
+  const t = (q.get("target") || "").trim().slice(0, 60);
+  if (!t) return;
+  $("q").value = t;
+  const also = (q.get("also") || "").split(",").map(x => x.trim()).filter(Boolean).slice(0, 5);
+  run(t, also);
+})();
 $("more").onclick = () => { showAll = true; render(); };
 $("csv").onclick = () => {
   const a = document.createElement("a");
@@ -716,7 +755,6 @@ $("csv").onclick = () => {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
-(function(){const P=new URLSearchParams(location.search);const t=P.get("target")||P.get("q");if(t){$("q").value=t;run(t);}})();
 </script>
 </body>
 </html>
